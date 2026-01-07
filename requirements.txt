@@ -1,2 +1,3 @@
 streamlit
-st-gsheets==0.3.1
+pandas
+git+https://github.com/streamlit/gsheets-connection.git
