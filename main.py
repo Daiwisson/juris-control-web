@@ -192,26 +192,43 @@ elif menu == "Processos":
                     st.dataframe(filtro[['data', 'descricao']], hide_index=True)
 
 # === 4. AGENDA ===
-elif menu == "Agenda":
-    st.title("📅 Agenda")
-    df_ag = ler_dados("agenda")
-    df_proc = ler_dados("processos")
-    
-    procs = df_proc['numero'].tolist() if not df_proc.empty else []
-    
-    with st.form("nova_ag"):
-        tit = st.text_input("Título")
-        vinculo = st.selectbox("Vínculo", ["Avulso"] + procs)
-        c1, c2, c3 = st.columns(3)
-        dt = c1.date_input("Data").strftime("%d/%m/%Y")
-        hr = c2.time_input("Hora").strftime("%H:%M")
-        tp = c3.selectbox("Tipo", ["Prazo", "Audiência"])
-        if st.form_submit_button("Agendar"):
-            novo = pd.DataFrame([{"titulo": tit, "processo": vinculo, "data": dt, "hora": hr, "tipo": tp}])
-            salvar_dados("agenda", pd.concat([df_ag, novo], ignore_index=True))
-            st.success("Agendado!")
-            
-    st.dataframe(df_ag, use_container_width=True)
+# --- DENTRO DO IF MENU == "AGENDA" ---
+
+# ... (seu código de carregar dados da agenda) ...
+
+with st.expander("➕ Novo Evento / Compromisso", expanded=True):
+    with st.form("form_agenda"):
+        # ... (seus campos existentes: nome, data, tipo...) ...
+        nome_evento = st.text_input("Título do Evento")
+        data_evento = st.date_input("Data", datetime.today())
+        
+        # --- NOVIDADE: SELEÇÃO DE PROCESSO ---
+        # Cria uma lista de processos para escolher
+        lista_procs = df_processos['ID'].astype(str) + " - " + df_processos['Número'] + " (" + df_processos['Cliente'] + ")"
+        # Adiciona a opção "Nenhum" caso seja um compromisso pessoal
+        opcoes_processos = ["Nenhum"] + list(lista_procs)
+        processo_vinculado = st.selectbox("Vincular a um Processo (Opcional)", options=opcoes_processos)
+        # -------------------------------------
+        
+        obs_evento = st.text_area("Observações")
+        submit_agenda = st.form_submit_button("Salvar Evento")
+
+        if submit_agenda:
+            # Lógica para salvar o ID do processo
+            id_proc_salvo = ""
+            if processo_vinculado != "Nenhum":
+                id_proc_salvo = processo_vinculado.split(" - ")[0] # Pega só o ID numérico
+
+            # Adicione 'ID_Processo': id_proc_salvo no seu dicionário de novo_evento
+            # Exemplo:
+            # novo_evento = pd.DataFrame([{
+            #     "ID": len(df_agenda) + 1,
+            #     "Evento": nome_evento,
+            #     "Data": str(data_evento),
+            #     "ID_Processo": id_proc_salvo,  <-- IMPORTANTE
+            #     "Obs": obs_evento
+            # }])
+            # ... (resto do código de salvar) ...
 
 # === 5. FINANCEIRO ===
 elif menu == "Financeiro":
@@ -254,3 +271,4 @@ elif menu == "Financeiro":
     st.divider()
 
     st.dataframe(df_fin, use_container_width=True)
+
