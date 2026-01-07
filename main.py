@@ -102,134 +102,179 @@ elif menu == "Clientes":
 
 # --- 3. PROCESSOS ---
 elif menu == "Processos":
-    st.title("⚖️ Processos")
-    df_proc = ler_dados("processos")
-    df_cli = ler_dados("clientes")
-    df_hist = ler_dados("historico")
+    st.title("⚖️ Gestão de Processos")
     
-    lista_clientes = df_cli['nome'].tolist() if not df_cli.empty else []
-    
-    tab1, tab2 = st.tabs(["Novo Processo", "Gestão"])
-    
-    with tab1:
-        if not lista_clientes:
-            st.warning("Cadastre clientes antes.")
-        else:
-            with st.form("new_proc"):
-                cli = st.selectbox("Cliente", lista_clientes)
-                num = st.text_input("Número CNJ")
-                juizo = st.text_input("Vara/Juízo")
-                polo = st.radio("Polo", ["Autor", "Réu"], horizontal=True)
-                desp = st.radio("Despacho", ["Presencial", "Virtual"], horizontal=True)
-                if st.form_submit_button("Cadastrar"):
-                    novo_id = df_proc['id'].max() + 1 if not df_proc.empty and 'id' in df_proc.columns and pd.notna(df_proc['id'].max()) else 1
-                    hj = datetime.now().strftime("%d/%m/%Y")
-                    novo = pd.DataFrame([{
-                        "id": novo_id, "numero": num, "cliente_nome": cli,
-                        "juizo": juizo, "polo": polo, "despacho": desp,
-                        "status": "Ativo", "data_uv": hj
-                    }])
-                    df_final = pd.concat([df_proc, novo], ignore_index=True)
-                    salvar_dados("processos", df_final)
-                    st.success("Criado!")
+    # Carrega dados
+    df_processos = conn.read(worksheet="Processos", usecols=list(range(6)), ttl=5)
+    df_processos = df_processos.dropna(how="all")
+    # Carrega agenda também para mostrar na linha do tempo
+    df_agenda = conn.read(worksheet="Agenda", usecols=list(range(6)), ttl=5)
 
-    with tab2:
-        # Seleção
-        opcoes = []
-        if not df_proc.empty:
-            opcoes = df_proc.apply(lambda x: f"{x['id']} - {x['numero']} ({x['cliente_nome']})", axis=1).tolist()
-        
-        escolha = st.selectbox("Selecione o Processo", [""] + opcoes)
-        
-        if escolha != "":
-            pid = int(float(escolha.split(" - ")[0]))
-            # Filtra o processo (Loc)
-            proc_row = df_proc[df_proc['id'] == pid].iloc[0]
+    # Criação das Abas
+    aba_novo, aba_gestao, aba_lista = st.tabs(["➕ Novo Processo", "📂 Gestão do Caso", "📋 Lista Geral"])
+
+    # --- ABA 1: NOVO PROCESSO ---
+    with aba_novo:
+        st.subheader("Cadastrar Novo Processo")
+        with st.form("form_processo"):
+            num_proc = st.text_input("Número do Processo (CNJ)")
+            # Carrega clientes para o selectbox
+            df_clientes = conn.read(worksheet="Clientes", usecols=list(range(5)), ttl=5)
+            lista_clientes = df_clientes["Nome"].tolist() if not df_clientes.empty else []
+            cliente_proc = st.selectbox("Cliente", lista_clientes)
             
-            st.info(f"Processo: {proc_row['numero']} | Cliente: {proc_row['cliente_nome']}")
-            st.caption(f"Status: {proc_row['status']} | Última Verificação: {proc_row['data_uv']}")
+            acao_proc = st.text_input("Ação / Assunto")
+            juizo_proc = st.text_input("Vara / Juízo")
+            status_proc = st.selectbox("Status", ["Ativo", "Suspenso", "Arquivado", "Em Recurso"])
             
-            # Botões de Ação
-            c1, c2, c3 = st.columns(3)
-            if c1.button("✅ Confirmar Consulta Hoje"):
-                idx = df_proc[df_proc['id'] == pid].index
-                df_proc.at[idx[0], 'data_uv'] = datetime.now().strftime("%d/%m/%Y")
-                salvar_dados("processos", df_proc)
-                st.rerun()
+            submit_proc = st.form_submit_button("Salvar Processo")
+
+            if submit_proc:
+                # Gera ID sequencial
+                novo_id = 1
+                if not df_processos.empty:
+                    # Tenta converter para int para achar o maximo
+                    ids_existentes = pd.to_numeric(df_processos["ID"], errors='coerce').fillna(0)
+                    novo_id = int(ids_existentes.max()) + 1
                 
-            if c2.button("📦 Arquivar"):
-                idx = df_proc[df_proc['id'] == pid].index
-                df_proc.at[idx[0], 'status'] = "Arquivado"
-                salvar_dados("processos", df_proc)
+                novo_processo = pd.DataFrame([{
+                    "ID": novo_id,
+                    "Número": num_proc,
+                    "Cliente": cliente_proc,
+                    "Ação": acao_proc,
+                    "Juízo": juizo_proc,
+                    "Status": status_proc
+                }])
+                
+                df_final_proc = pd.concat([df_processos, novo_processo], ignore_index=True)
+                conn.update(worksheet="Processos", data=df_final_proc)
+                st.success(f"Processo {num_proc} cadastrado!")
                 st.rerun()
 
-            if c3.button("♻️ Reativar"):
-                idx = df_proc[df_proc['id'] == pid].index
-                df_proc.at[idx[0], 'status'] = "Ativo"
-                salvar_dados("processos", df_proc)
-                st.rerun()
-
-            st.divider()
+    # --- ABA 2: GESTÃO (Detalhes + Agenda) ---
+    with aba_gestao:
+        st.header("Consultar e Gerir Caso")
+        if not df_processos.empty:
+            # Prepara lista para seleção
+            df_processos['ID'] = pd.to_numeric(df_processos['ID'], errors='coerce').fillna(0).astype(int)
+            lista_selecao = df_processos['ID'].astype(str) + " - " + df_processos['Número'].astype(str) + " (" + df_processos['Cliente'].astype(str) + ")"
             
-            # Histórico
-            c_h1, c_h2 = st.columns(2)
-            with c_h1:
-                with st.form("add_hist"):
-                    desc = st.text_area("Novo Andamento")
-                    dt_evt = st.date_input("Data").strftime("%d/%m/%Y")
-                    if st.form_submit_button("Registrar"):
-                        novo_h = pd.DataFrame([{"processo_id": pid, "data": dt_evt, "descricao": desc}])
-                        salvar_dados("historico", pd.concat([df_hist, novo_h], ignore_index=True))
-                        # Atualiza data UV
-                        idx = df_proc[df_proc['id'] == pid].index
-                        df_proc.at[idx[0], 'data_uv'] = dt_evt
-                        salvar_dados("processos", df_proc)
-                        st.success("OK")
-                        st.rerun()
-            with c_h2:
-                if not df_hist.empty:
-                    filtro = df_hist[df_hist['processo_id'] == pid]
-                    st.dataframe(filtro[['data', 'descricao']], hide_index=True)
+            escolha = st.selectbox("Selecione o Processo", options=lista_selecao)
+            
+            if escolha:
+                # Pega ID (com a correção do float/int que fizemos antes)
+                pid = int(float(escolha.split(" - ")[0]))
+                
+                # Filtra os dados
+                filtro = df_processos[df_processos["ID"] == pid]
+                if not filtro.empty:
+                    proc_atual = filtro.iloc[0]
+                    
+                    st.divider()
+                    c1, c2, c3 = st.columns(3)
+                    c1.metric("ID Interno", proc_atual['ID'])
+                    c2.metric("Status", proc_atual['Status'])
+                    c3.write(f"**Cliente:** {proc_atual['Cliente']}")
+                    
+                    st.write(f"**Assunto:** {proc_atual['Ação']}")
+                    st.write(f"**Juízo:** {proc_atual['Juízo']}")
+                    st.code(proc_atual['Número'], language="text") # Facilita copiar o número
+
+                    # --- LINHA DO TEMPO DA AGENDA ---
+                    st.divider()
+                    st.subheader("📅 Histórico e Prazos do Processo")
+                    
+                    # Filtra a agenda pelo ID do processo selecionado
+                    if not df_agenda.empty and "ID_Processo" in df_agenda.columns:
+                        # Garante que tudo é texto para comparar
+                        df_agenda["ID_Processo"] = df_agenda["ID_Processo"].astype(str).replace("nan", "").replace(".0", "")
+                        pid_str = str(pid)
+                        
+                        eventos_do_caso = df_agenda[df_agenda["ID_Processo"] == pid_str]
+                        
+                        if not eventos_do_caso.empty:
+                            for i, row in eventos_do_caso.iterrows():
+                                st.info(f"🗓️ **{row['Data']}** ({row['Hora']}) - **{row['Evento']}**\n\n_{row['Obs']}_")
+                        else:
+                            st.caption("Nenhum evento vinculado a este processo.")
+                    else:
+                        st.warning("Coluna ID_Processo não encontrada na aba Agenda.")
+
+    # --- ABA 3: LISTA GERAL ---
+    with aba_lista:
+        st.header("Panorama Geral")
+        st.dataframe(
+            df_processos, 
+            use_container_width=True,
+            hide_index=True,
+            column_config={
+                "ID": st.column_config.NumberColumn(format="%d")
+            }
+        )
 
 # === 4. AGENDA ===
-# --- DENTRO DO IF MENU == "AGENDA" ---
+elif menu == "Agenda":
+    st.title("📅 Agenda e Prazos")
+    
+    # Carrega dados atualizados
+    df_agenda = conn.read(worksheet="Agenda", usecols=list(range(6)), ttl=5)
+    df_processos = conn.read(worksheet="Processos", usecols=list(range(6)), ttl=5)
+    df_agenda = df_agenda.dropna(how="all")
+    
+    # --- FORMULÁRIO DE NOVO EVENTO ---
+    with st.expander("➕ Novo Evento / Compromisso", expanded=True):
+        with st.form("form_agenda"):
+            col_a, col_b = st.columns(2)
+            nome_evento = col_a.text_input("Título do Evento (Ex: Audiência)")
+            tipo_evento = col_b.selectbox("Tipo", ["Audiência", "Prazo", "Reunião", "Diligência", "Outro"])
+            
+            col_c, col_d = st.columns(2)
+            data_evento = col_c.date_input("Data", datetime.today())
+            hora_evento = col_d.time_input("Hora", datetime.now().time())
+            
+            # --- VÍNCULO COM PROCESSO ---
+            # Cria lista de processos para o dropdown
+            # Tratamento de erro caso a tabela de processos esteja vazia
+            if not df_processos.empty:
+                df_processos['ID'] = pd.to_numeric(df_processos['ID'], errors='coerce').fillna(0).astype(int)
+                lista_procs = df_processos['ID'].astype(str) + " - " + df_processos['Número'].astype(str) + " (" + df_processos['Cliente'].astype(str) + ")"
+                opcoes = ["Nenhum"] + list(lista_procs)
+            else:
+                opcoes = ["Nenhum"]
+            
+            processo_escolhido = st.selectbox("Vincular a um Processo (Opcional)", options=opcoes)
+            # ---------------------------
 
-# ... (seu código de carregar dados da agenda) ...
+            obs_evento = st.text_area("Observações / Detalhes")
+            submit_agenda = st.form_submit_button("Salvar na Agenda")
 
-with st.expander("➕ Novo Evento / Compromisso", expanded=True):
-    with st.form("form_agenda"):
-        # ... (seus campos existentes: nome, data, tipo...) ...
-        nome_evento = st.text_input("Título do Evento")
-        data_evento = st.date_input("Data", datetime.today())
-        
-        # --- NOVIDADE: SELEÇÃO DE PROCESSO ---
-        # Cria uma lista de processos para escolher
-        lista_procs = df_processos['ID'].astype(str) + " - " + df_processos['Número'] + " (" + df_processos['Cliente'] + ")"
-        # Adiciona a opção "Nenhum" caso seja um compromisso pessoal
-        opcoes_processos = ["Nenhum"] + list(lista_procs)
-        processo_vinculado = st.selectbox("Vincular a um Processo (Opcional)", options=opcoes_processos)
-        # -------------------------------------
-        
-        obs_evento = st.text_area("Observações")
-        submit_agenda = st.form_submit_button("Salvar Evento")
+            if submit_agenda:
+                # Lógica para pegar só o ID numérico do processo escolhido
+                id_vincular = ""
+                if processo_escolhido != "Nenhum":
+                    id_vincular = processo_escolhido.split(" - ")[0]
 
-        if submit_agenda:
-            # Lógica para salvar o ID do processo
-            id_proc_salvo = ""
-            if processo_vinculado != "Nenhum":
-                id_proc_salvo = processo_vinculado.split(" - ")[0] # Pega só o ID numérico
+                # Cria o novo dado com a coluna ID_Processo
+                novo_evento = pd.DataFrame([{
+                    "Data": data_evento.strftime("%d/%m/%Y"),
+                    "Hora": str(hora_evento),
+                    "Evento": nome_evento,
+                    "Tipo": tipo_evento,
+                    "Obs": obs_evento,
+                    "ID_Processo": id_vincular
+                }])
+                
+                # Salva na planilha
+                df_final_agenda = pd.concat([df_agenda, novo_evento], ignore_index=True)
+                conn.update(worksheet="Agenda", data=df_final_agenda)
+                st.success("Evento agendado com sucesso!")
+                st.rerun()
 
-            # Adicione 'ID_Processo': id_proc_salvo no seu dicionário de novo_evento
-            # Exemplo:
-            # novo_evento = pd.DataFrame([{
-            #     "ID": len(df_agenda) + 1,
-            #     "Evento": nome_evento,
-            #     "Data": str(data_evento),
-            #     "ID_Processo": id_proc_salvo,  <-- IMPORTANTE
-            #     "Obs": obs_evento
-            # }])
-            # ... (resto do código de salvar) ...
-
+    # --- LISTA DE EVENTOS ---
+    st.divider()
+    st.subheader("Próximos Compromissos")
+    st.dataframe(df_agenda, use_container_width=True)
+    
 # === 5. FINANCEIRO ===
 elif menu == "Financeiro":
     st.title("💰 Financeiro")
@@ -271,4 +316,5 @@ elif menu == "Financeiro":
     st.divider()
 
     st.dataframe(df_fin, use_container_width=True)
+
 
