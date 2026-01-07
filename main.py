@@ -142,7 +142,7 @@ elif menu == "Processos":
         escolha = st.selectbox("Selecione o Processo", [""] + opcoes)
         
         if escolha != "":
-            pid = int(escolha.split(" - ")[0])
+            pid = int(float(escolha.split(" - ")[0]))
             # Filtra o processo (Loc)
             proc_row = df_proc[df_proc['id'] == pid].iloc[0]
             
@@ -252,4 +252,5 @@ elif menu == "Financeiro":
             st.rerun()
             
     st.divider()
+
     st.dataframe(df_fin, use_container_width=True)
